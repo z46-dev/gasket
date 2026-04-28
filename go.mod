@@ -2,7 +2,7 @@ module github.com/z46-dev/gasket
 
 go 1.26.2
 
-require github.com/z46-dev/gomysql v0.0.0-20260428012151-378ec6a597e3
+require github.com/z46-dev/gomysql v0.0.0-20260428031825-eb47f6c99071
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

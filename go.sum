@@ -24,6 +24,8 @@ github.com/z46-dev/gomysql v0.0.0-20260428003134-c121dd60b967 h1:W1bW+znbr50kACC
 github.com/z46-dev/gomysql v0.0.0-20260428003134-c121dd60b967/go.mod h1:IFQuHX0/6DQdiOFE8zVdrCLPQB4Q+3WhisAZh2RnOew=
 github.com/z46-dev/gomysql v0.0.0-20260428012151-378ec6a597e3 h1:1vUeeS6XHlPlHGDoQednfsn9Zj7QNkoZwbn7R6SvCTk=
 github.com/z46-dev/gomysql v0.0.0-20260428012151-378ec6a597e3/go.mod h1:IFQuHX0/6DQdiOFE8zVdrCLPQB4Q+3WhisAZh2RnOew=
+github.com/z46-dev/gomysql v0.0.0-20260428031825-eb47f6c99071 h1:aWiqRM6jKkzuwmEZDn4YC5z0GRc8nAjsU5yOt3RHbQQ=
+github.com/z46-dev/gomysql v0.0.0-20260428031825-eb47f6c99071/go.mod h1:IFQuHX0/6DQdiOFE8zVdrCLPQB4Q+3WhisAZh2RnOew=
 golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 h1:R84qjqJb5nVJMxqWYb3np9L5ZsaDtB+a39EqjV0JSUM=
 golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0/go.mod h1:S9Xr4PYopiDyqSyp5NjCrhFrqg6A5zA2E/iPHPhqnS8=
 golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f h1:W3F4c+6OLc6H2lb//N1q4WpJkhzJCK5J6kUi1NTVXfM=

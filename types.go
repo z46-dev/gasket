@@ -7,32 +7,34 @@ import (
 )
 
 type (
+	// WARNING: It is inadvisable to edit any fields yourself.
 	Task struct {
-		id         int       `gomysql:"id,primary,increment"`
-		taskType   string    `gomysql:"task_type"`
-		payload    []byte    `gomysql:"payload"`
-		createdAt  time.Time `gomysql:"created_at"`
-		enqueuedAt time.Time `gomysql:"enqueued_at"`
+		ID         int       `gomysql:"id,primary,increment"`
+		TaskType   string    `gomysql:"task_type"`
+		Payload    []byte    `gomysql:"payload"`
+		CreatedAt  time.Time `gomysql:"created_at"`
+		EnqueuedAt time.Time `gomysql:"enqueued_at"`
+		Active     bool      `gomysql:"active"`
 
 		// These are for creation, not used elsewhere
 		_schedule    *TaskSchedule
 		_retryPolicy *TaskRetryPolicy
 	}
 
+	// WARNING: It is inadvisable to edit any fields yourself.
 	TaskSchedule struct {
-		id             int       `gomysql:"id,primary,increment"`
-		taskID         int       `gomysql:"task_id,fkey:task.id"`
-		scheduledFor   time.Time `gomysql:"scheduled_for"`
-		timeIsDeadline bool      `gomysql:"time_is_deadline"`
+		TaskID         int       `gomysql:"task_id,primary,fkey:task.id,ondelete:cascade"`
+		ScheduledFor   time.Time `gomysql:"scheduled_for"`
+		TimeIsDeadline bool      `gomysql:"time_is_deadline"`
 	}
 
+	// WARNING: It is inadvisable to edit any fields yourself.
 	TaskRetryPolicy struct {
-		id             int           `gomysql:"id,primary,increment"`
-		taskID         int           `gomysql:"task_id,fkey:task.id"`
-		maximumRetries int           `gomysql:"maximum_retries"`
-		retryCount     int           `gomysql:"retry_count"`
-		retryDelay     time.Duration `gomysql:"retry_delay"`
-		lastTriedAt    time.Time     `gomysql:"last_tried_at"`
+		TaskID         int           `gomysql:"task_id,primary,fkey:task.id,ondelete:cascade"`
+		MaximumRetries int           `gomysql:"maximum_retries"`
+		RetryDelay     time.Duration `gomysql:"retry_delay"`
+		RetryCount     int           `gomysql:"retry_count"`
+		LastTriedAt    time.Time     `gomysql:"last_tried_at"`
 	}
 
 	// TaskInfo exists to tell people about the task without passing them a mutable Task struct, so we can keep the fields of Task private.
