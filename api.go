@@ -25,15 +25,15 @@ func (c *Client) Close() (err error) {
 }
 
 func (c *Client) register() (err error) {
-	if c.tasksDB, err = gomysql.Register(c.driver, Task{}); err != nil {
+	if c.tasksDB, err = gomysql.Register(c.driver, task{}); err != nil {
 		return
 	}
 
-	if c.taskSchedulesDB, err = gomysql.Register(c.driver, TaskSchedule{}); err != nil {
+	if c.taskSchedulesDB, err = gomysql.Register(c.driver, taskSchedule{}); err != nil {
 		return
 	}
 
-	if c.taskRetryPoliciesDB, err = gomysql.Register(c.driver, TaskRetryPolicy{}); err != nil {
+	if c.taskRetryPoliciesDB, err = gomysql.Register(c.driver, taskRetryPolicy{}); err != nil {
 		return
 	}
 
