@@ -11,6 +11,7 @@ func (c *Client) NewTask(taskType string, payload []byte, opts ...TaskOption) (i
 		Payload:   payload,
 		CreatedAt: time.Now(),
 		Active:    false,
+		_client:   c,
 	}
 
 	for _, opt := range opts {
@@ -85,8 +86,37 @@ func RetryPolicy(maxRetries int, retryDelay time.Duration) TaskOption {
 
 func (t *task) GetInfo() (info *TaskInfo) {
 	info = &TaskInfo{
-		task: t,
+		task:   t,
+		client: t._client,
 	}
+
+	return
+}
+
+func (ti *TaskInfo) Refresh() (err error) {
+	var t *task
+	if t, err = ti.client.loadTask(ti.ID()); err != nil {
+		return
+	}
+
+	ti.task = t
+	return
+}
+
+func (ti *TaskInfo) WaitForCompletion() (result TaskConsumerResult, err error) {
+	panic("Not implemented yet")
+
+	return
+}
+
+func (ti *TaskInfo) WaitForEnqueue() (err error) {
+	panic("Not implemented yet")
+
+	return
+}
+
+func (ti *TaskInfo) Cancel() (err error) {
+	panic("Not implemented yet")
 
 	return
 }
@@ -197,6 +227,7 @@ func (c *Client) loadTask(id int) (t *task, err error) {
 		return
 	}
 
+	t._client = c
 	return
 }
 

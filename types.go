@@ -19,6 +19,7 @@ type (
 		// These are for creation, not used elsewhere
 		_schedule    *taskSchedule
 		_retryPolicy *taskRetryPolicy
+		_client      *Client
 	}
 
 	// WARNING: It is inadvisable to edit any fields yourself.
@@ -47,7 +48,8 @@ type (
 		// SchedulingInfo  *TaskScheduleInfo
 		// RetryPolicyInfo *TaskRetryPolicyInfo
 		// realTask        *task
-		task *task
+		task   *task
+		client *Client
 	}
 
 	TaskScheduleInfo struct {
@@ -67,6 +69,7 @@ type (
 	TaskConsumerResult struct {
 		Success bool
 		Error   error
+		Data    []byte
 	}
 
 	TaskConsumerFunc func(id int, payload []byte) (result TaskConsumerResult)
