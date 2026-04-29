@@ -257,3 +257,17 @@ Run the test suite with:
 ```bash
 go test ./...
 ```
+
+Run the benchmark suite with:
+
+```bash
+go test ./tests -run '^$' -bench BenchmarkGasketWorkloads -benchmem
+```
+
+The benchmarks cover in-memory and on-disk SQLite runs, instant and timed consumers, retrying tasks, delayed `RunIn` tasks, small and large payloads, and on-disk runs with 1, 2, and 4 clients.
+
+To also write a CSV and SVG throughput graph:
+
+```bash
+go test ./tests -run '^$' -bench BenchmarkGasketWorkloads -benchmem -args -gasket.bench.graph-dir=benchmarks
+```

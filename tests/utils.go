@@ -94,7 +94,7 @@ func runClient(client *gasket.Client) (ctx context.Context, cancel context.Cance
 	return
 }
 
-func waitForEnqueue(t *testing.T, taskInfo *gasket.TaskInfo, timeout time.Duration) (err error) {
+func waitForEnqueue(t testing.TB, taskInfo *gasket.TaskInfo, timeout time.Duration) (err error) {
 	t.Helper()
 
 	type waitResult struct {
@@ -118,7 +118,7 @@ func waitForEnqueue(t *testing.T, taskInfo *gasket.TaskInfo, timeout time.Durati
 	return
 }
 
-func waitForCompletion(t *testing.T, taskInfo *gasket.TaskInfo, timeout time.Duration) (result gasket.TaskConsumerResult, err error) {
+func waitForCompletion(t testing.TB, taskInfo *gasket.TaskInfo, timeout time.Duration) (result gasket.TaskConsumerResult, err error) {
 	t.Helper()
 
 	type waitResult struct {
