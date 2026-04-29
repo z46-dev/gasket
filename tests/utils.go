@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/z46-dev/gasket"
 )
@@ -23,6 +25,23 @@ func setup(t *testing.T, pathOverride ...string) (client *gasket.Client, err err
 	}
 
 	if client, err = gasket.NewClient(pathOverride[0]); err != nil {
+		t.Fatalf("Error creating client: %v", err)
+		return
+	}
+
+	t.Logf("Test setup complete, client created successfully")
+	return
+}
+
+func setupWithClientOptions(t *testing.T, path string, opts ...gasket.ClientOption) (client *gasket.Client, err error) {
+	t.Logf("Using overridden test DB file path: %s", path)
+
+	if err = rmTestDBFile(path); err != nil {
+		t.Fatalf("Error removing existing test DB file: %v", err)
+		return
+	}
+
+	if client, err = gasket.NewClient(path, opts...); err != nil {
 		t.Fatalf("Error creating client: %v", err)
 		return
 	}
@@ -59,6 +78,69 @@ func rmTestDBFile(fileName string) (err error) {
 		if os.IsNotExist(err) {
 			err = nil
 		}
+	}
+
+	return
+}
+
+func runClient(client *gasket.Client) (ctx context.Context, cancel context.CancelFunc, runErr chan error) {
+	ctx, cancel = context.WithCancel(context.Background())
+	runErr = make(chan error, 1)
+
+	go func() {
+		runErr <- client.Run(ctx)
+	}()
+
+	return
+}
+
+func waitForEnqueue(t *testing.T, taskInfo *gasket.TaskInfo, timeout time.Duration) (err error) {
+	t.Helper()
+
+	type waitResult struct {
+		err error
+	}
+
+	var resultChan chan waitResult = make(chan waitResult, 1)
+	go func() {
+		resultChan <- waitResult{
+			err: taskInfo.WaitForEnqueue(),
+		}
+	}()
+
+	select {
+	case result := <-resultChan:
+		err = result.err
+	case <-time.After(timeout):
+		t.Fatal("Timed out waiting for task enqueue")
+	}
+
+	return
+}
+
+func waitForCompletion(t *testing.T, taskInfo *gasket.TaskInfo, timeout time.Duration) (result gasket.TaskConsumerResult, err error) {
+	t.Helper()
+
+	type waitResult struct {
+		result gasket.TaskConsumerResult
+		err    error
+	}
+
+	var resultChan chan waitResult = make(chan waitResult, 1)
+	go func() {
+		result, err := taskInfo.WaitForCompletion()
+		resultChan <- waitResult{
+			result: result,
+			err:    err,
+		}
+	}()
+
+	select {
+	case waitResult := <-resultChan:
+		result = waitResult.result
+		err = waitResult.err
+	case <-time.After(timeout):
+		t.Fatal("Timed out waiting for task completion")
 	}
 
 	return

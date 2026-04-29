@@ -3,13 +3,19 @@ package gasket
 import (
 	"fmt"
 	"time"
+
+	"github.com/z46-dev/gomysql"
 )
 
 func (c *Client) NewTask(taskType string, payload []byte, opts ...TaskOption) (info *TaskInfo, err error) {
+	var createdAt time.Time = time.Now()
+
 	var t = &task{
 		TaskType:  taskType,
 		Payload:   payload,
-		CreatedAt: time.Now(),
+		State:     TaskStatePending,
+		CreatedAt: createdAt,
+		NextRunAt: &createdAt,
 		Active:    false,
 		_client:   c,
 	}
@@ -45,10 +51,36 @@ func ScheduleIn(duration time.Duration) TaskOption {
 			return
 		}
 
+		var scheduledFor time.Time = time.Now().Add(duration)
+
 		t._schedule = &taskSchedule{
-			ScheduledFor:   time.Now().Add(duration),
+			ScheduledFor:   scheduledFor,
 			TimeIsDeadline: false,
+			IsImperative:   false,
 		}
+
+		t.NextRunAt = &scheduledFor
+
+		return
+	}
+}
+
+func RunIn(duration time.Duration) TaskOption {
+	return func(t *task) (err error) {
+		if t._schedule != nil {
+			err = fmt.Errorf(errCannotOverwriteSchedule)
+			return
+		}
+
+		var scheduledFor time.Time = time.Now().Add(duration)
+
+		t._schedule = &taskSchedule{
+			ScheduledFor:   scheduledFor,
+			TimeIsDeadline: false,
+			IsImperative:   true,
+		}
+
+		t.NextRunAt = &scheduledFor
 
 		return
 	}
@@ -61,9 +93,12 @@ func RunBy(futureDuration time.Duration) TaskOption {
 			return
 		}
 
+		var scheduledFor time.Time = time.Now().Add(futureDuration)
+
 		t._schedule = &taskSchedule{
-			ScheduledFor:   time.Now().Add(futureDuration),
+			ScheduledFor:   scheduledFor,
 			TimeIsDeadline: true,
+			IsImperative:   false,
 		}
 
 		return
@@ -104,19 +139,97 @@ func (ti *TaskInfo) Refresh() (err error) {
 }
 
 func (ti *TaskInfo) WaitForCompletion() (result TaskConsumerResult, err error) {
-	panic("Not implemented yet")
+	for {
+		if err = ti.Refresh(); err != nil {
+			return
+		}
 
-	return
+		switch ti.State() {
+		case TaskStateCompleted, TaskStateFailed:
+			if ti.task._result != nil {
+				result = ti.task._result.GetConsumerResult()
+				return
+			}
+
+			if ti.State() == TaskStateCompleted {
+				result.Success = true
+				return
+			}
+
+			result.Success = false
+			if ti.task.LastError != nil {
+				result.Error = fmt.Errorf("%s", *ti.task.LastError)
+				return
+			}
+
+			err = fmt.Errorf(errTaskFinishedWithoutData, ti.ID())
+			return
+		case TaskStateCancelled:
+			err = fmt.Errorf(errTaskCancelled, ti.ID())
+			return
+		}
+
+		time.Sleep(ti.client.runPollInterval)
+	}
 }
 
 func (ti *TaskInfo) WaitForEnqueue() (err error) {
-	panic("Not implemented yet")
+	for {
+		if err = ti.Refresh(); err != nil {
+			return
+		}
 
-	return
+		if ti.EnqueuedAt() != nil {
+			return
+		}
+
+		switch ti.State() {
+		case TaskStateCancelled:
+			err = fmt.Errorf(errTaskCancelled, ti.ID())
+			return
+		case TaskStateCompleted, TaskStateFailed:
+			err = fmt.Errorf(errTaskFinishedWithoutEnqueue, ti.ID())
+			return
+		}
+
+		time.Sleep(ti.client.runPollInterval)
+	}
 }
 
 func (ti *TaskInfo) Cancel() (err error) {
-	panic("Not implemented yet")
+	var completedAt time.Time = time.Now()
+
+	var filter *gomysql.Filter = gomysql.NewFilter().
+		KeyCmp(ti.client.tasksDB.FieldByGoName("ID"), gomysql.OpEqual, ti.ID()).
+		And().
+		KeyCmp(ti.client.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStatePending)
+
+	var rows []gomysql.ReturnedValues
+	if rows, err = ti.client.updateTaskWithRetry(
+		filter,
+		[]*gomysql.RegisteredStructField{ti.client.tasksDB.FieldByGoName("ID")},
+		gomysql.SetField(ti.client.tasksDB.FieldByGoName("State"), TaskStateCancelled),
+		gomysql.SetField(ti.client.tasksDB.FieldByGoName("NextRunAt"), nil),
+		gomysql.SetField(ti.client.tasksDB.FieldByGoName("CompletedAt"), completedAt),
+		gomysql.SetField(ti.client.tasksDB.FieldByGoName("Active"), false),
+	); err != nil {
+		return
+	}
+
+	if len(rows) == 0 {
+		if err = ti.Refresh(); err != nil {
+			return
+		}
+
+		err = fmt.Errorf(errTaskCannotBeCancelled, ti.ID(), ti.State())
+		return
+	}
+
+	ti.task.State = TaskStateCancelled
+	ti.task.NextRunAt = nil
+	ti.task.CompletedAt = &completedAt
+	ti.task.Active = false
+	ti.task.LastError = nil
 
 	return
 }
@@ -137,8 +250,28 @@ func (ti *TaskInfo) CreatedAt() time.Time {
 	return ti.task.CreatedAt
 }
 
+func (ti *TaskInfo) State() TaskState {
+	return ti.task.State
+}
+
+func (ti *TaskInfo) NextRunAt() *time.Time {
+	return ti.task.NextRunAt
+}
+
 func (ti *TaskInfo) EnqueuedAt() *time.Time {
 	return ti.task.EnqueuedAt
+}
+
+func (ti *TaskInfo) StartedAt() *time.Time {
+	return ti.task.StartedAt
+}
+
+func (ti *TaskInfo) CompletedAt() *time.Time {
+	return ti.task.CompletedAt
+}
+
+func (ti *TaskInfo) LastError() *string {
+	return ti.task.LastError
 }
 
 func (ti *TaskInfo) IsActive() bool {
@@ -171,6 +304,10 @@ func (tsi *TaskScheduleInfo) ScheduledFor() time.Time {
 
 func (tsi *TaskScheduleInfo) TimeIsDeadline() bool {
 	return tsi.scheduleInfo.TimeIsDeadline
+}
+
+func (tsi *TaskScheduleInfo) IsImperative() bool {
+	return tsi.scheduleInfo.IsImperative
 }
 
 func (trpi *TaskRetryPolicyInfo) MaximumRetries() int {
@@ -213,26 +350,39 @@ func (c *Client) storeTask(t *task) (err error) {
 	return
 }
 
-// Warning: this only loads the task, not the schedule or retry policy. We will "comlete" the task in Client.finishLoadingTask.
+func (tr *taskResult) GetConsumerResult() (result TaskConsumerResult) {
+	result.Success = tr.Success
+	result.Data = tr.Data
+
+	if tr.ErrorMessage != nil {
+		result.Error = fmt.Errorf("%s", *tr.ErrorMessage)
+	}
+
+	return
+}
+
 func (c *Client) loadTask(id int) (t *task, err error) {
 	if t, err = c.tasksDB.Select(id); err != nil {
 		return
 	}
 
-	if t._schedule, err = c.taskSchedulesDB.Select(t.ID); err != nil {
+	if t == nil {
+		err = fmt.Errorf(errNoTaskWithID, id)
 		return
 	}
 
-	if t._retryPolicy, err = c.taskRetryPoliciesDB.Select(t.ID); err != nil {
+	if t._schedule, err = c.selectTaskScheduleWithRetry(t.ID); err != nil {
+		return
+	}
+
+	if t._retryPolicy, err = c.selectTaskRetryPolicyWithRetry(t.ID); err != nil {
+		return
+	}
+
+	if t._result, err = c.selectTaskResultWithRetry(t.ID); err != nil {
 		return
 	}
 
 	t._client = c
-	return
-}
-
-// Cascading deletes will take care of the schedule and retry policy, so we only need to delete the task!
-func (c *Client) deleteTask(id int) (err error) {
-	err = c.tasksDB.Delete(id)
 	return
 }
