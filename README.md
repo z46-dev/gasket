@@ -258,16 +258,20 @@ Run the test suite with:
 go test ./...
 ```
 
-Run the benchmark suite with:
+Run processing benchmarks with:
 
 ```bash
-go test ./tests -run '^$' -bench BenchmarkGasketWorkloads -benchmem
+go test ./tests -run '^$' -bench BenchmarkTaskProcessing -count=1 -benchmem
 ```
 
-The benchmarks cover in-memory and on-disk SQLite runs, instant and timed consumers, retrying tasks, delayed `RunIn` tasks, small and large payloads, and on-disk runs with 1, 2, and 4 clients.
-
-To also write a CSV and SVG throughput graph:
+To write PNG benchmark plots with error bars:
 
 ```bash
-go test ./tests -run '^$' -bench BenchmarkGasketWorkloads -benchmem -args -gasket.bench.graph-dir=benchmarks
+GASKET_BENCH_PLOT_DIR=benchmarks GASKET_BENCH_JSON=benchmarks/results.jsonl go test ./tests -run '^$' -bench BenchmarkTaskProcessing -benchtime=1000x -count=5 -benchmem
 ```
+
+The benchmark matrix covers small immediate tasks, due scheduled tasks, mixed success/failure/retry tasks, retry-once tasks, and large payload tasks across 1, 2, and 4 clients.
+
+This writes `ops-by-client.png`, `p95-latency-by-client.png`, `payload-throughput-by-client.png`, `outcomes.png`, and one `ops-over-time-*.png` file per workload. Use `-count` greater than one to make the error bars meaningful.
+
+Set `GASKET_BENCH_JSON` to also append raw JSONL data, and set `GASKET_BENCH_SAMPLE_INTERVAL`, for example `50ms`, to change the time-series sample interval.

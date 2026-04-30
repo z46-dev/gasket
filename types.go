@@ -1,6 +1,7 @@
 package gasket
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/z46-dev/gomysql"
@@ -82,6 +83,7 @@ type (
 	TaskOption func(task *task) (err error)
 
 	Client struct {
+		sqlDB               *sql.DB
 		driver              *gomysql.Driver
 		tasksDB             *gomysql.RegisteredStruct[task]
 		taskResultsDB       *gomysql.RegisteredStruct[taskResult]

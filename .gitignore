@@ -33,3 +33,5 @@ go.work.sum
 
 # Database files
 *.db
+benchmark_plots
+benchmark_results.json

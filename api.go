@@ -1,7 +1,10 @@
 package gasket
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/gob"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +17,7 @@ const (
 	defaultRunPollInterval time.Duration = 10 * time.Millisecond
 	defaultLockRetryCount  int           = 20
 	defaultLockRetryDelay  time.Duration = 5 * time.Millisecond
+	sqlTimeLayout          string        = "2006-01-02T15:04:05.000000000Z"
 )
 
 func NewClient(sqlDatabaseFilePath string, opts ...ClientOption) (client *Client, err error) {
@@ -31,11 +35,33 @@ func NewClient(sqlDatabaseFilePath string, opts ...ClientOption) (client *Client
 		}
 	}
 
+	if sqlDatabaseFilePath != ":memory:" {
+		if client.sqlDB, err = sql.Open("sqlite", sqlDatabaseFilePath); err != nil {
+			return
+		}
+		client.sqlDB.SetMaxOpenConns(1)
+		client.sqlDB.SetMaxIdleConns(1)
+
+		if _, err = client.sqlDB.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+			_ = client.sqlDB.Close()
+			return
+		}
+	}
+
 	if client.driver, err = gomysql.Begin(sqlDatabaseFilePath); err != nil {
+		if client.sqlDB != nil {
+			_ = client.sqlDB.Close()
+		}
 		return
 	}
 
 	if err = client.register(); err != nil {
+		_ = client.Close()
+		return
+	}
+
+	if err = client.prepareDatabase(); err != nil {
+		_ = client.Close()
 		return
 	}
 
@@ -43,8 +69,14 @@ func NewClient(sqlDatabaseFilePath string, opts ...ClientOption) (client *Client
 }
 
 func (c *Client) Close() (err error) {
+	if c.sqlDB != nil {
+		err = c.sqlDB.Close()
+	}
+
 	if c.driver != nil {
-		err = c.driver.Close()
+		if closeErr := c.driver.Close(); err == nil {
+			err = closeErr
+		}
 	}
 
 	return
@@ -65,6 +97,26 @@ func (c *Client) register() (err error) {
 
 	if c.taskRetryPoliciesDB, err = gomysql.Register(c.driver, taskRetryPolicy{}); err != nil {
 		return
+	}
+
+	return
+}
+
+func (c *Client) prepareDatabase() (err error) {
+	var statements []string = []string{
+		"CREATE INDEX IF NOT EXISTS idx_gasket_task_due ON task (state, next_run_at, task_type, id);",
+		"CREATE INDEX IF NOT EXISTS idx_gasket_task_recovery_enqueued ON task (state, enqueued_at, id);",
+		"CREATE INDEX IF NOT EXISTS idx_gasket_task_recovery_started ON task (state, started_at, id);",
+	}
+
+	if c.sqlDB == nil {
+		return
+	}
+
+	for _, statement := range statements {
+		if _, err = c.execSQLWithRetry(statement); err != nil {
+			return
+		}
 	}
 
 	return
@@ -132,6 +184,52 @@ func (c *Client) Run(ctx context.Context) (err error) {
 }
 
 func (c *Client) runNextDueTask() (ranTask bool, err error) {
+	var (
+		taskID   int
+		task     *task
+		consumer TaskConsumerFunc
+		claimed  bool
+	)
+
+	if c.sqlDB == nil {
+		return c.runNextDueTaskPortable()
+	}
+
+	if taskID, claimed, err = c.claimNextDueTaskID(); err != nil || !claimed {
+		return
+	}
+
+	if task, err = c.loadTaskForExecution(taskID); err != nil {
+		return
+	}
+
+	consumer = c.consumers[task.TaskType]
+	if consumer == nil {
+		return
+	}
+
+	if c.taskDeadlineExceeded(task) {
+		if err = c.markTaskDeadlineExceeded(task); err != nil {
+			return
+		}
+
+		ranTask = true
+		return
+	}
+
+	if err = c.markTaskRunning(task); err != nil {
+		return
+	}
+
+	if err = c.markTaskFinished(task, c.callTaskConsumer(consumer, task.ID, task.Payload), true); err != nil {
+		return
+	}
+
+	ranTask = true
+	return
+}
+
+func (c *Client) runNextDueTaskPortable() (ranTask bool, err error) {
 	var dueTasks []*task
 	if dueTasks, err = c.loadDueTasks(); err != nil {
 		return
@@ -150,7 +248,7 @@ func (c *Client) runNextDueTask() (ranTask bool, err error) {
 			continue
 		}
 
-		if task, err = c.loadTask(task.ID); err != nil {
+		if task, err = c.loadTaskForExecution(task.ID); err != nil {
 			return
 		}
 
@@ -199,6 +297,95 @@ func (c *Client) recoverInterruptedTasks() (recovered bool, err error) {
 		recovered = true
 	}
 
+	return
+}
+
+func (c *Client) claimNextDueTaskID() (id int, claimed bool, err error) {
+	var (
+		taskTypes  []string
+		enqueuedAt time.Time = time.Now()
+		query      string
+		args       []any
+	)
+
+	taskTypes = c.registeredTaskTypes()
+	if len(taskTypes) == 0 {
+		return
+	}
+
+	query, args = claimNextDueTaskSQL(taskTypes, enqueuedAt)
+	for range c.lockRetryCount {
+		err = c.sqlDB.QueryRow(query, args...).Scan(&id)
+		if err == nil {
+			claimed = true
+			return
+		}
+
+		if err == sql.ErrNoRows {
+			err = nil
+			return
+		}
+
+		if !isDatabaseLockedError(err) {
+			return
+		}
+
+		time.Sleep(c.lockRetryDelay)
+	}
+
+	return
+}
+
+func (c *Client) registeredTaskTypes() (taskTypes []string) {
+	var taskType string
+
+	taskTypes = make([]string, 0, len(c.consumers))
+	for taskType = range c.consumers {
+		taskTypes = append(taskTypes, taskType)
+	}
+
+	sort.Strings(taskTypes)
+	return
+}
+
+func claimNextDueTaskSQL(taskTypes []string, enqueuedAt time.Time) (query string, args []any) {
+	var placeholders string = strings.TrimSuffix(strings.Repeat("?, ", len(taskTypes)), ", ")
+
+	query = fmt.Sprintf(`
+UPDATE task
+SET state = ?, enqueued_at = ?, active = ?
+WHERE id = (
+	SELECT task.id
+	FROM task
+	LEFT JOIN taskSchedule ON taskSchedule.task_id = task.id
+	WHERE task.state = ?
+		AND task.next_run_at <= ?
+		AND task.task_type IN (%s)
+	ORDER BY
+		CASE
+			WHEN taskSchedule.time_is_deadline = ? AND taskSchedule.is_imperative = ? THEN 0
+			ELSE 1
+		END,
+		task.next_run_at ASC,
+		task.id ASC
+	LIMIT 1
+)
+AND state = ?
+RETURNING id;`, placeholders)
+
+	args = []any{
+		string(TaskStateEnqueued),
+		formatTaskSQLTime(enqueuedAt),
+		true,
+		string(TaskStatePending),
+		formatTaskSQLTime(enqueuedAt),
+	}
+
+	for _, taskType := range taskTypes {
+		args = append(args, taskType)
+	}
+
+	args = append(args, false, true, string(TaskStatePending))
 	return
 }
 
@@ -326,13 +513,63 @@ func (c *Client) markTaskRunning(task *task) (err error) {
 	task.StartedAt = &startedAt
 	task.Active = true
 
-	if err = c.updateSingleTaskWithRetry(task); err != nil {
+	if c.sqlDB == nil {
+		if _, err = c.updateTaskFieldsWithRetry(task.ID,
+			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gomysql.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+		); err != nil {
+			return
+		}
+
+		if task._retryPolicy != nil {
+			task._retryPolicy.LastTriedAt = startedAt
+			err = c.updateRetryPolicyWithRetry(task._retryPolicy)
+		}
+
 		return
 	}
 
-	if task._retryPolicy != nil {
-		task._retryPolicy.LastTriedAt = startedAt
-		err = c.updateRetryPolicyWithRetry(task._retryPolicy)
+	err = c.markTaskRunningWithRetry(task)
+	return
+}
+
+func (c *Client) markTaskRunningWithRetry(task *task) (err error) {
+	var lastTriedAt time.Time
+
+	if task._retryPolicy == nil {
+		_, err = c.execSQLWithRetry(
+			"UPDATE task SET state = ?, started_at = ?, active = ? WHERE id = ?;",
+			string(task.State),
+			formatTaskSQLTime(*task.StartedAt),
+			task.Active,
+			task.ID,
+		)
+		return
+	}
+
+	lastTriedAt = *task.StartedAt
+	err = c.withSQLTxRetry(func(tx *sql.Tx) (txErr error) {
+		if _, txErr = tx.Exec(
+			"UPDATE task SET state = ?, started_at = ?, active = ? WHERE id = ?;",
+			string(task.State),
+			formatTaskSQLTime(*task.StartedAt),
+			task.Active,
+			task.ID,
+		); txErr != nil {
+			return
+		}
+
+		_, txErr = tx.Exec(
+			"UPDATE taskRetryPolicy SET last_tried_at = ? WHERE task_id = ?;",
+			formatTaskSQLTime(lastTriedAt),
+			task.ID,
+		)
+		return
+	})
+
+	if err == nil {
+		task._retryPolicy.LastTriedAt = lastTriedAt
 	}
 
 	return
@@ -364,11 +601,72 @@ func (c *Client) markTaskFinished(task *task, result TaskConsumerResult, allowRe
 		task.LastError = &lastError
 	}
 
-	if err = c.storeTaskResult(task, result); err != nil {
+	if c.sqlDB == nil {
+		if err = c.storeTaskResult(task, result); err != nil {
+			return
+		}
+
+		_, err = c.updateTaskFieldsWithRetry(task.ID,
+			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gomysql.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
+			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+		)
 		return
 	}
 
-	err = c.updateSingleTaskWithRetry(task)
+	err = c.finishTaskWithRetry(task, result)
+	return
+}
+
+func (c *Client) finishTaskWithRetry(task *task, result TaskConsumerResult) (err error) {
+	var (
+		errorMessage *string
+		data         []byte
+	)
+
+	if result.Error != nil {
+		var message string = result.Error.Error()
+		errorMessage = &message
+	} else if !result.Success {
+		var message string = errConsumerFailed
+		errorMessage = &message
+	}
+
+	if data, err = encodeTaskResultData(result.Data); err != nil {
+		return
+	}
+
+	task._result = &taskResult{
+		TaskID:       task.ID,
+		Success:      result.Success,
+		ErrorMessage: errorMessage,
+		Data:         result.Data,
+	}
+
+	err = c.withSQLTxRetry(func(tx *sql.Tx) (txErr error) {
+		if _, txErr = tx.Exec(
+			"INSERT OR REPLACE INTO taskResult (task_id, success, error_message, data) VALUES (?, ?, ?, ?);",
+			task.ID,
+			result.Success,
+			stringPtrSQLValue(errorMessage),
+			data,
+		); txErr != nil {
+			return
+		}
+
+		_, txErr = tx.Exec(
+			"UPDATE task SET state = ?, next_run_at = ?, completed_at = ?, last_error = ?, active = ? WHERE id = ?;",
+			string(task.State),
+			timePtrSQLValue(task.NextRunAt),
+			timePtrSQLValue(task.CompletedAt),
+			stringPtrSQLValue(task.LastError),
+			task.Active,
+			task.ID,
+		)
+		return
+	})
 	return
 }
 
@@ -383,20 +681,6 @@ func (c *Client) callTaskConsumer(consumer TaskConsumerFunc, id int, payload []b
 	}()
 
 	result = consumer(id, payload)
-	return
-}
-
-func (c *Client) updateSingleTaskWithRetry(task *task) (err error) {
-	for range c.lockRetryCount {
-		if err = c.tasksDB.Update(task); err == nil {
-			return
-		} else if !isDatabaseLockedError(err) {
-			return
-		}
-
-		time.Sleep(c.lockRetryDelay)
-	}
-
 	return
 }
 
@@ -490,6 +774,7 @@ func (c *Client) taskCanRetry(task *task, result TaskConsumerResult) bool {
 
 func (c *Client) markTaskRetryPending(task *task) (err error) {
 	var nextRunAt time.Time = time.Now().Add(task._retryPolicy.RetryDelay)
+	var retryCount int = task._retryPolicy.RetryCount + 1
 
 	task.State = TaskStatePending
 	task.NextRunAt = &nextRunAt
@@ -498,12 +783,50 @@ func (c *Client) markTaskRetryPending(task *task) (err error) {
 	task.CompletedAt = nil
 	task.LastError = nil
 
-	if err = c.updateSingleTaskWithRetry(task); err != nil {
+	if c.sqlDB == nil {
+		if _, err = c.updateTaskFieldsWithRetry(task.ID,
+			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gomysql.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
+			gomysql.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
+			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+		); err != nil {
+			return
+		}
+
+		task._retryPolicy.RetryCount = retryCount
+		err = c.updateRetryPolicyWithRetry(task._retryPolicy)
 		return
 	}
 
-	task._retryPolicy.RetryCount++
-	err = c.updateRetryPolicyWithRetry(task._retryPolicy)
+	if err = c.retryTaskWithRetry(task, retryCount); err != nil {
+		return
+	}
+
+	task._retryPolicy.RetryCount = retryCount
+	return
+}
+
+func (c *Client) retryTaskWithRetry(task *task, retryCount int) (err error) {
+	err = c.withSQLTxRetry(func(tx *sql.Tx) (txErr error) {
+		if _, txErr = tx.Exec(
+			"UPDATE task SET state = ?, next_run_at = ?, started_at = NULL, completed_at = NULL, last_error = NULL, active = ? WHERE id = ?;",
+			string(task.State),
+			timePtrSQLValue(task.NextRunAt),
+			task.Active,
+			task.ID,
+		); txErr != nil {
+			return
+		}
+
+		_, txErr = tx.Exec(
+			"UPDATE taskRetryPolicy SET retry_count = ? WHERE task_id = ?;",
+			retryCount,
+			task.ID,
+		)
+		return
+	})
 	return
 }
 
@@ -550,6 +873,108 @@ func (c *Client) updateTaskWithRetry(filter *gomysql.Filter, returning []*gomysq
 	return
 }
 
+func (c *Client) updateTaskFieldsWithRetry(id int, assignments ...gomysql.UpdateAssignment) (rows int64, err error) {
+	var filter *gomysql.Filter = gomysql.NewFilter().
+		KeyCmp(c.tasksDB.FieldByGoName("ID"), gomysql.OpEqual, id)
+
+	for range c.lockRetryCount {
+		if rows, err = c.tasksDB.UpdateWithFilter(filter, assignments...); err == nil {
+			return
+		} else if !isDatabaseLockedError(err) {
+			return
+		}
+
+		time.Sleep(c.lockRetryDelay)
+	}
+
+	return
+}
+
+func (c *Client) execSQLWithRetry(query string, args ...any) (result sql.Result, err error) {
+	for range c.lockRetryCount {
+		if result, err = c.sqlDB.Exec(query, args...); err == nil {
+			return
+		}
+
+		if !isDatabaseLockedError(err) {
+			return
+		}
+
+		time.Sleep(c.lockRetryDelay)
+	}
+
+	return
+}
+
+func (c *Client) withSQLTxRetry(fn func(*sql.Tx) error) (err error) {
+	var tx *sql.Tx
+
+	for range c.lockRetryCount {
+		if tx, err = c.sqlDB.Begin(); err != nil {
+			if !isDatabaseLockedError(err) {
+				return
+			}
+
+			time.Sleep(c.lockRetryDelay)
+			continue
+		}
+
+		if err = fn(tx); err != nil {
+			_ = tx.Rollback()
+		} else if err = tx.Commit(); err == nil {
+			return
+		}
+
+		if !isDatabaseLockedError(err) {
+			return
+		}
+
+		_ = tx.Rollback()
+		time.Sleep(c.lockRetryDelay)
+	}
+
+	return
+}
+
+func encodeTaskResultData(data []byte) (encoded []byte, err error) {
+	var buf bytes.Buffer
+
+	if err = gob.NewEncoder(&buf).Encode(data); err != nil {
+		return
+	}
+
+	encoded = buf.Bytes()
+	return
+}
+
+func formatTaskSQLTime(value time.Time) string {
+	return value.UTC().Format(sqlTimeLayout)
+}
+
+func timePtrSQLValue(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+
+	return formatTaskSQLTime(*value)
+}
+
+func stringPtrSQLValue(value *string) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
 func isDatabaseLockedError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "database is locked")
+	if err == nil {
+		return false
+	}
+
+	var message string = strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked") ||
+		strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "sqlite_locked")
 }

@@ -362,6 +362,14 @@ func (tr *taskResult) GetConsumerResult() (result TaskConsumerResult) {
 }
 
 func (c *Client) loadTask(id int) (t *task, err error) {
+	return c.loadTaskWithDetails(id, true)
+}
+
+func (c *Client) loadTaskForExecution(id int) (t *task, err error) {
+	return c.loadTaskWithDetails(id, false)
+}
+
+func (c *Client) loadTaskWithDetails(id int, includeResult bool) (t *task, err error) {
 	if t, err = c.tasksDB.Select(id); err != nil {
 		return
 	}
@@ -379,8 +387,10 @@ func (c *Client) loadTask(id int) (t *task, err error) {
 		return
 	}
 
-	if t._result, err = c.selectTaskResultWithRetry(t.ID); err != nil {
-		return
+	if includeResult {
+		if t._result, err = c.selectTaskResultWithRetry(t.ID); err != nil {
+			return
+		}
 	}
 
 	t._client = c
