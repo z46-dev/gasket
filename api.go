@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/z46-dev/gomysql"
+	"github.com/z46-dev/gosqlite"
 )
 
 const (
@@ -48,7 +48,7 @@ func NewClient(sqlDatabaseFilePath string, opts ...ClientOption) (client *Client
 		}
 	}
 
-	if client.driver, err = gomysql.Begin(sqlDatabaseFilePath); err != nil {
+	if client.driver, err = gosqlite.Begin(sqlDatabaseFilePath); err != nil {
 		if client.sqlDB != nil {
 			_ = client.sqlDB.Close()
 		}
@@ -83,19 +83,19 @@ func (c *Client) Close() (err error) {
 }
 
 func (c *Client) register() (err error) {
-	if c.tasksDB, err = gomysql.Register(c.driver, task{}); err != nil {
+	if c.tasksDB, err = gosqlite.Register(c.driver, task{}); err != nil {
 		return
 	}
 
-	if c.taskResultsDB, err = gomysql.Register(c.driver, taskResult{}); err != nil {
+	if c.taskResultsDB, err = gosqlite.Register(c.driver, taskResult{}); err != nil {
 		return
 	}
 
-	if c.taskSchedulesDB, err = gomysql.Register(c.driver, taskSchedule{}); err != nil {
+	if c.taskSchedulesDB, err = gosqlite.Register(c.driver, taskSchedule{}); err != nil {
 		return
 	}
 
-	if c.taskRetryPoliciesDB, err = gomysql.Register(c.driver, taskRetryPolicy{}); err != nil {
+	if c.taskRetryPoliciesDB, err = gosqlite.Register(c.driver, taskRetryPolicy{}); err != nil {
 		return
 	}
 
@@ -396,17 +396,17 @@ func (c *Client) taskDeadlineExceeded(task *task) bool {
 func (c *Client) claimTask(task *task) (claimed bool, err error) {
 	var enqueuedAt time.Time = time.Now()
 
-	var filter *gomysql.Filter = gomysql.NewFilter().
-		KeyCmp(c.tasksDB.FieldByGoName("ID"), gomysql.OpEqual, task.ID).
+	var filter *gosqlite.Filter = gosqlite.NewFilter().
+		KeyCmp(c.tasksDB.FieldByGoName("ID"), gosqlite.OpEqual, task.ID).
 		And().
-		KeyCmp(c.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStatePending)
+		KeyCmp(c.tasksDB.FieldByGoName("State"), gosqlite.OpEqual, TaskStatePending)
 
-	var rows []gomysql.ReturnedValues
+	var rows []gosqlite.ReturnedValues
 	if rows, err = c.updateTaskWithRetry(filter,
-		[]*gomysql.RegisteredStructField{c.tasksDB.FieldByGoName("ID")},
-		gomysql.SetField(c.tasksDB.FieldByGoName("State"), TaskStateEnqueued),
-		gomysql.SetField(c.tasksDB.FieldByGoName("EnqueuedAt"), enqueuedAt),
-		gomysql.SetField(c.tasksDB.FieldByGoName("Active"), true),
+		[]*gosqlite.RegisteredStructField{c.tasksDB.FieldByGoName("ID")},
+		gosqlite.SetField(c.tasksDB.FieldByGoName("State"), TaskStateEnqueued),
+		gosqlite.SetField(c.tasksDB.FieldByGoName("EnqueuedAt"), enqueuedAt),
+		gosqlite.SetField(c.tasksDB.FieldByGoName("Active"), true),
 	); err != nil {
 		return
 	}
@@ -423,10 +423,10 @@ func (c *Client) claimTask(task *task) (claimed bool, err error) {
 }
 
 func (c *Client) loadDueTasks() (tasks []*task, err error) {
-	var filter *gomysql.Filter = gomysql.NewFilter().
-		KeyCmp(c.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStatePending).
+	var filter *gosqlite.Filter = gosqlite.NewFilter().
+		KeyCmp(c.tasksDB.FieldByGoName("State"), gosqlite.OpEqual, TaskStatePending).
 		And().
-		KeyCmp(c.tasksDB.FieldByGoName("NextRunAt"), gomysql.OpLessThanOrEqual, time.Now()).
+		KeyCmp(c.tasksDB.FieldByGoName("NextRunAt"), gosqlite.OpLessThanOrEqual, time.Now()).
 		Ordering(c.tasksDB.FieldByGoName("NextRunAt"), true).
 		Ordering(c.tasksDB.FieldByGoName("ID"), true)
 
@@ -469,17 +469,17 @@ func (c *Client) loadDueTasks() (tasks []*task, err error) {
 func (c *Client) loadInterruptedTasks() (tasks []*task, err error) {
 	var cutoff time.Time = time.Now().Add(-c.taskRecoveryTimeout)
 
-	var filter *gomysql.Filter = gomysql.NewFilter().
+	var filter *gosqlite.Filter = gosqlite.NewFilter().
 		OpenGroup().
-		KeyCmp(c.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStateEnqueued).
+		KeyCmp(c.tasksDB.FieldByGoName("State"), gosqlite.OpEqual, TaskStateEnqueued).
 		And().
-		KeyCmp(c.tasksDB.FieldByGoName("EnqueuedAt"), gomysql.OpLessThanOrEqual, cutoff).
+		KeyCmp(c.tasksDB.FieldByGoName("EnqueuedAt"), gosqlite.OpLessThanOrEqual, cutoff).
 		CloseGroup().
 		Or().
 		OpenGroup().
-		KeyCmp(c.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStateRunning).
+		KeyCmp(c.tasksDB.FieldByGoName("State"), gosqlite.OpEqual, TaskStateRunning).
 		And().
-		KeyCmp(c.tasksDB.FieldByGoName("StartedAt"), gomysql.OpLessThanOrEqual, cutoff).
+		KeyCmp(c.tasksDB.FieldByGoName("StartedAt"), gosqlite.OpLessThanOrEqual, cutoff).
 		CloseGroup().
 		Ordering(c.tasksDB.FieldByGoName("ID"), true)
 
@@ -515,9 +515,9 @@ func (c *Client) markTaskRunning(task *task) (err error) {
 
 	if c.sqlDB == nil {
 		if _, err = c.updateTaskFieldsWithRetry(task.ID,
-			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
-			gomysql.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
 		); err != nil {
 			return
 		}
@@ -607,11 +607,11 @@ func (c *Client) markTaskFinished(task *task, result TaskConsumerResult, allowRe
 		}
 
 		_, err = c.updateTaskFieldsWithRetry(task.ID,
-			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
-			gomysql.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
-			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
 		)
 		return
 	}
@@ -754,7 +754,7 @@ func (c *Client) selectTaskRetryPolicyWithRetry(id int) (policy *taskRetryPolicy
 	return
 }
 
-func (c *Client) selectAllTasksWithRetry(filter *gomysql.Filter) (tasks []*task, err error) {
+func (c *Client) selectAllTasksWithRetry(filter *gosqlite.Filter) (tasks []*task, err error) {
 	for range c.lockRetryCount {
 		if tasks, err = c.tasksDB.SelectAllWithFilter(filter); err == nil {
 			return
@@ -785,12 +785,12 @@ func (c *Client) markTaskRetryPending(task *task) (err error) {
 
 	if c.sqlDB == nil {
 		if _, err = c.updateTaskFieldsWithRetry(task.ID,
-			gomysql.SetField(c.tasksDB.FieldByGoName("State"), task.State),
-			gomysql.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
-			gomysql.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
-			gomysql.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("State"), task.State),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("NextRunAt"), task.NextRunAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("StartedAt"), task.StartedAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("CompletedAt"), task.CompletedAt),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("LastError"), task.LastError),
+			gosqlite.SetField(c.tasksDB.FieldByGoName("Active"), task.Active),
 		); err != nil {
 			return
 		}
@@ -859,7 +859,7 @@ func (c *Client) storeTaskResult(task *task, result TaskConsumerResult) (err err
 	return
 }
 
-func (c *Client) updateTaskWithRetry(filter *gomysql.Filter, returning []*gomysql.RegisteredStructField, assignments ...gomysql.UpdateAssignment) (rows []gomysql.ReturnedValues, err error) {
+func (c *Client) updateTaskWithRetry(filter *gosqlite.Filter, returning []*gosqlite.RegisteredStructField, assignments ...gosqlite.UpdateAssignment) (rows []gosqlite.ReturnedValues, err error) {
 	for range c.lockRetryCount {
 		if rows, err = c.tasksDB.UpdateWithFilterReturning(filter, returning, assignments...); err == nil {
 			return
@@ -873,9 +873,9 @@ func (c *Client) updateTaskWithRetry(filter *gomysql.Filter, returning []*gomysq
 	return
 }
 
-func (c *Client) updateTaskFieldsWithRetry(id int, assignments ...gomysql.UpdateAssignment) (rows int64, err error) {
-	var filter *gomysql.Filter = gomysql.NewFilter().
-		KeyCmp(c.tasksDB.FieldByGoName("ID"), gomysql.OpEqual, id)
+func (c *Client) updateTaskFieldsWithRetry(id int, assignments ...gosqlite.UpdateAssignment) (rows int64, err error) {
+	var filter *gosqlite.Filter = gosqlite.NewFilter().
+		KeyCmp(c.tasksDB.FieldByGoName("ID"), gosqlite.OpEqual, id)
 
 	for range c.lockRetryCount {
 		if rows, err = c.tasksDB.UpdateWithFilter(filter, assignments...); err == nil {

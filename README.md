@@ -4,7 +4,7 @@
 
 > **Important**
 > 
-> `gasket` is an embedded scheduler. Tasks, schedules, retries, and results are stored in SQLite through `gomysql`, so there is no Redis, broker, or sidecar service to operate.
+> `gasket` is an embedded scheduler. Tasks, schedules, retries, and results are stored in SQLite through `gosqlite`, so there is no Redis, broker, or sidecar service to operate.
 
 ## Highlights
 

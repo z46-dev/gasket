@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/z46-dev/gomysql"
+	"github.com/z46-dev/gosqlite"
 )
 
 func (c *Client) NewTask(taskType string, payload []byte, opts ...TaskOption) (info *TaskInfo, err error) {
@@ -199,19 +199,19 @@ func (ti *TaskInfo) WaitForEnqueue() (err error) {
 func (ti *TaskInfo) Cancel() (err error) {
 	var completedAt time.Time = time.Now()
 
-	var filter *gomysql.Filter = gomysql.NewFilter().
-		KeyCmp(ti.client.tasksDB.FieldByGoName("ID"), gomysql.OpEqual, ti.ID()).
+	var filter *gosqlite.Filter = gosqlite.NewFilter().
+		KeyCmp(ti.client.tasksDB.FieldByGoName("ID"), gosqlite.OpEqual, ti.ID()).
 		And().
-		KeyCmp(ti.client.tasksDB.FieldByGoName("State"), gomysql.OpEqual, TaskStatePending)
+		KeyCmp(ti.client.tasksDB.FieldByGoName("State"), gosqlite.OpEqual, TaskStatePending)
 
-	var rows []gomysql.ReturnedValues
+	var rows []gosqlite.ReturnedValues
 	if rows, err = ti.client.updateTaskWithRetry(
 		filter,
-		[]*gomysql.RegisteredStructField{ti.client.tasksDB.FieldByGoName("ID")},
-		gomysql.SetField(ti.client.tasksDB.FieldByGoName("State"), TaskStateCancelled),
-		gomysql.SetField(ti.client.tasksDB.FieldByGoName("NextRunAt"), nil),
-		gomysql.SetField(ti.client.tasksDB.FieldByGoName("CompletedAt"), completedAt),
-		gomysql.SetField(ti.client.tasksDB.FieldByGoName("Active"), false),
+		[]*gosqlite.RegisteredStructField{ti.client.tasksDB.FieldByGoName("ID")},
+		gosqlite.SetField(ti.client.tasksDB.FieldByGoName("State"), TaskStateCancelled),
+		gosqlite.SetField(ti.client.tasksDB.FieldByGoName("NextRunAt"), nil),
+		gosqlite.SetField(ti.client.tasksDB.FieldByGoName("CompletedAt"), completedAt),
+		gosqlite.SetField(ti.client.tasksDB.FieldByGoName("Active"), false),
 	); err != nil {
 		return
 	}
