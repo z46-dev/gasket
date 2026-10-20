@@ -1,3 +1,6 @@
+![Tests](https://img.shields.io/github/actions/workflow/status/z46-dev/gasket/ci.yml?branch=main&event=push&label=CI)
+![Made with Golang](https://img.shields.io/badge/-Made_with_Golang-007d9c?logo=go&logoColor=white)
+
 # gasket
 
 > A reliable Go task scheduler and consumer with no service dependencies.

@@ -35,3 +35,4 @@ go.work.sum
 *.db
 benchmark_plots
 benchmark_results.json
+*.journal

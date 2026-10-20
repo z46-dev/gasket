@@ -978,3 +978,18 @@ func isDatabaseLockedError(err error) bool {
 		strings.Contains(message, "sqlite_busy") ||
 		strings.Contains(message, "sqlite_locked")
 }
+
+// retryDatabaseOperation applies the configured lock retry policy to ORM operations.
+func (c *Client) retryDatabaseOperation(operation func() error) (err error) {
+	for attempt := range c.lockRetryCount {
+		if err = operation(); err == nil || !isDatabaseLockedError(err) {
+			return
+		}
+
+		if attempt+1 < c.lockRetryCount {
+			time.Sleep(c.lockRetryDelay)
+		}
+	}
+
+	return
+}

@@ -1,12 +1,12 @@
 module github.com/z46-dev/gasket
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/z46-dev/gosqlite v0.0.0-20260612230000-33de3204128a
+	github.com/z46-dev/gosqlite v0.0.0-20260719175548-e15201acdb53
 	gonum.org/v1/plot v0.17.0
-	modernc.org/sqlite v1.52.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -16,18 +16,18 @@ require (
 	git.sr.ht/~sbinet/gg v0.7.0 // indirect
 	github.com/ajstarks/svgo v0.0.0-20211024235047-1546f124cd8b // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/image v0.30.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.73.1 // indirect
+	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )

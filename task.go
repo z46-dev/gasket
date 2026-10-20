@@ -327,14 +327,14 @@ func (trpi *TaskRetryPolicyInfo) LastTriedAt() time.Time {
 }
 
 func (c *Client) storeTask(t *task) (err error) {
-	if err = c.tasksDB.Insert(t); err != nil {
+	if err = c.retryDatabaseOperation(func() error { return c.tasksDB.Insert(t) }); err != nil {
 		return
 	}
 
 	if t._schedule != nil {
 		t._schedule.TaskID = t.ID
 
-		if err = c.taskSchedulesDB.Insert(t._schedule); err != nil {
+		if err = c.retryDatabaseOperation(func() error { return c.taskSchedulesDB.Insert(t._schedule) }); err != nil {
 			return
 		}
 	}
@@ -342,7 +342,7 @@ func (c *Client) storeTask(t *task) (err error) {
 	if t._retryPolicy != nil {
 		t._retryPolicy.TaskID = t.ID
 
-		if err = c.taskRetryPoliciesDB.Insert(t._retryPolicy); err != nil {
+		if err = c.retryDatabaseOperation(func() error { return c.taskRetryPoliciesDB.Insert(t._retryPolicy) }); err != nil {
 			return
 		}
 	}
@@ -370,7 +370,10 @@ func (c *Client) loadTaskForExecution(id int) (t *task, err error) {
 }
 
 func (c *Client) loadTaskWithDetails(id int, includeResult bool) (t *task, err error) {
-	if t, err = c.tasksDB.Select(id); err != nil {
+	if err = c.retryDatabaseOperation(func() (selectErr error) {
+		t, selectErr = c.tasksDB.Select(id)
+		return
+	}); err != nil {
 		return
 	}
 
