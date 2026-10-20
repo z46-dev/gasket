@@ -24,15 +24,30 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Select Go version
+        id: go-version
+        shell: bash
+        run: |
+          if [[ "${ACT:-}" == "true" ]]; then
+            version="$(awk '$1 == "go" { print $2; exit }' go.mod)"
+            echo "act=true" >> "$GITHUB_OUTPUT"
+          else
+            version="stable"
+            echo "act=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go-version.outputs.version }}
 
       - name: Install gopls
-        run: go install golang.org/x/tools/gopls
+        if: ${{ steps.go-version.outputs.act != 'true' }}
+        run: go install golang.org/x/tools/gopls@latest
 
       - name: Run gopls quality checks
+        if: ${{ steps.go-version.outputs.act != 'true' }}
         shell: bash
         run: |
           set -o pipefail
@@ -81,16 +96,29 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Select Go version
+        id: go-version
+        shell: bash
+        run: |
+          if [[ "${ACT:-}" == "true" ]]; then
+            version="$(awk '$1 == "go" { print $2; exit }' go.mod)"
+            echo "act=true" >> "$GITHUB_OUTPUT"
+          else
+            version="stable"
+            echo "act=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: ${{ steps.go-version.outputs.version }}
 
       - name: Scan Go dependencies and code
         uses: golang/govulncheck-action@v1
         with:
           repo-checkout: false
-          go-version-file: go.mod
+          go-version-input: ${{ steps.go-version.outputs.version }}
           go-package: ./...
 
       - name: Install gosec
