@@ -1,10 +1,10 @@
 module github.com/z46-dev/gasket
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/z46-dev/gosqlite v0.0.0-20260719175548-e15201acdb53
+	github.com/z46-dev/gosqlite v0.0.0-20261020191314-fa9a0437fecc
 	gonum.org/v1/plot v0.17.0
 	modernc.org/sqlite v1.60.1
 )
