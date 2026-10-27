@@ -6,7 +6,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/z46-dev/gosqlite v0.0.0-20261020191314-fa9a0437fecc
 	gonum.org/v1/plot v0.17.0
-	modernc.org/sqlite v1.60.1
+	modernc.org/sqlite v1.61.0
 )
 
 require (
